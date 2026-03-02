@@ -1,0 +1,13 @@
+### `requirements.txt`
+
+
+pandas
+numpy
+matplotlib
+seaborn
+plotly
+streamlit
+openpyxl
+scipy
+statsmodels
+requests

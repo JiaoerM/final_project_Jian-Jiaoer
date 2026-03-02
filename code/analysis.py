@@ -1,0 +1,341 @@
+"""
+analysis.py
+Food Desert & Health Outcomes — Census Tract Level Analysis
+Outputs: summary stats, correlation matrix, OLS regression, group comparison
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+import seaborn as sns
+from scipy import stats
+import statsmodels.formula.api as smf
+import warnings
+import os
+
+warnings.filterwarnings("ignore")
+
+# ── 0. Setup ────────────────────────────────────────────────────────────────
+OUTPUT_DIR = "/Users/majiaoer/Desktop/final_project/outputs"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+HEALTH_OUTCOMES   = ["DIABETES", "OBESITY", "BPHIGH", "CSMOKING"]
+ACCESS_MEASURES   = ["lapop1", "lalowi1", "MedianFamilyIncome", "TractHUNV", "TractSNAP"]
+FOOD_DESERT_FLAG  = "LILATracts_1And10"
+
+# ── 1. Load & Clean ─────────────────────────────────────────────────────────
+print("=" * 60)
+print("STEP 1: Loading data")
+print("=" * 60)
+
+df = pd.read_csv("/Users/majiaoer/Desktop/final_project/data/derived/merged_tract_data.csv", dtype={"CensusTract": str})
+
+# lapop10 is 89% missing (rural only) — use lapop1 as main access measure
+# Drop rows missing lapop1 (these are rural tracts with no urban measure)
+df_urban = df[df["Urban"] == 1].copy()
+df_rural = df[df["Urban"] == 0].copy()
+
+print(f"Total tracts:  {len(df):,}")
+print(f"Urban tracts:  {len(df_urban):,}")
+print(f"Rural tracts:  {len(df_rural):,}")
+print(f"Food deserts (LILA 1&10): {df[FOOD_DESERT_FLAG].sum():,} "
+      f"({df[FOOD_DESERT_FLAG].mean()*100:.1f}% of all tracts)")
+
+# Working dataset: drop rows missing lapop1 OR any health outcome
+df_model = df.dropna(subset=["lapop1", "MedianFamilyIncome"] + HEALTH_OUTCOMES).copy()
+print(f"\nModel dataset (non-missing lapop1 + outcomes): {len(df_model):,} tracts")
+
+
+# ── 2. Descriptive Statistics ────────────────────────────────────────────────
+print("\n" + "=" * 60)
+print("STEP 2: Descriptive Statistics")
+print("=" * 60)
+
+desc_cols = HEALTH_OUTCOMES + ["lapop1", "MedianFamilyIncome", "TractHUNV"]
+desc = df[desc_cols].describe().round(2)
+print(desc)
+desc.to_csv(f"{OUTPUT_DIR}/descriptive_stats.csv")
+print(f"  → Saved: {OUTPUT_DIR}/descriptive_stats.csv")
+
+
+# ── 3. Group Comparison: Food Desert vs. Non-Food Desert ────────────────────
+print("\n" + "=" * 60)
+print("STEP 3: Group Comparison (Food Desert vs Non-Food Desert)")
+print("=" * 60)
+
+group = df.groupby(FOOD_DESERT_FLAG)[HEALTH_OUTCOMES].mean().round(2)
+group.index = ["Non-Food Desert", "Food Desert"]
+print(group)
+group.to_csv(f"{OUTPUT_DIR}/group_means.csv")
+print(f"  → Saved: {OUTPUT_DIR}/group_means.csv")
+
+# T-tests for each outcome
+print("\nIndependent t-tests (food desert vs non):")
+for outcome in HEALTH_OUTCOMES:
+    desert     = df[df[FOOD_DESERT_FLAG] == 1][outcome].dropna()
+    non_desert = df[df[FOOD_DESERT_FLAG] == 0][outcome].dropna()
+    t_stat, p_val = stats.ttest_ind(desert, non_desert)
+    sig = "***" if p_val < 0.001 else ("**" if p_val < 0.01 else ("*" if p_val < 0.05 else ""))
+    print(f"  {outcome:<10}  mean_desert={desert.mean():.2f}  "
+          f"mean_non={non_desert.mean():.2f}  t={t_stat:.2f}  p={p_val:.4f} {sig}")
+
+# Plot group comparison bar chart
+fig, ax = plt.subplots(figsize=(9, 5))
+x = np.arange(len(HEALTH_OUTCOMES))
+width = 0.35
+bars1 = ax.bar(x - width/2, group.loc["Non-Food Desert"], width,
+               label="Non-Food Desert", color="#4C72B0", alpha=0.85)
+bars2 = ax.bar(x + width/2, group.loc["Food Desert"], width,
+               label="Food Desert", color="#DD8452", alpha=0.85)
+ax.set_xticks(x)
+ax.set_xticklabels(["Diabetes", "Obesity", "High BP", "Smoking"], fontsize=12)
+ax.set_ylabel("Prevalence (%)", fontsize=12)
+ax.set_title("Health Outcomes: Food Desert vs. Non-Food Desert Tracts", fontsize=13, fontweight="bold")
+ax.legend(fontsize=11)
+ax.yaxis.set_minor_locator(mticker.AutoMinorLocator())
+ax.grid(axis="y", alpha=0.3)
+plt.tight_layout()
+plt.savefig(f"{OUTPUT_DIR}/group_comparison_bar.png", dpi=150)
+plt.close()
+print(f"  → Saved: {OUTPUT_DIR}/group_comparison_bar.png")
+
+
+# ── 4. Correlation Matrix ────────────────────────────────────────────────────
+print("\n" + "=" * 60)
+print("STEP 4: Correlation Matrix")
+print("=" * 60)
+
+corr_cols = HEALTH_OUTCOMES + ["lapop1", "lalowi1", FOOD_DESERT_FLAG,
+                                "MedianFamilyIncome", "TractHUNV", "TractSNAP"]
+corr_matrix = df_model[corr_cols].corr().round(3)
+print(corr_matrix)
+corr_matrix.to_csv(f"{OUTPUT_DIR}/correlation_matrix.csv")
+
+# Heatmap
+nice_labels = {
+    "DIABETES": "Diabetes", "OBESITY": "Obesity", "BPHIGH": "High BP",
+    "CSMOKING": "Smoking", "lapop1": "Pop >1mi\nfrom Grocery",
+    "lalowi1": "Low Income\n& Low Access", "LILATracts_1And10": "Food\nDesert Flag",
+    "MedianFamilyIncome": "Median\nIncome", "TractHUNV": "No Vehicle\nHH",
+    "TractSNAP": "SNAP HH"
+}
+corr_renamed = corr_matrix.rename(index=nice_labels, columns=nice_labels)
+
+fig, ax = plt.subplots(figsize=(11, 9))
+mask = np.triu(np.ones_like(corr_matrix, dtype=bool))
+sns.heatmap(corr_renamed, mask=mask, annot=True, fmt=".2f", cmap="RdBu_r",
+            center=0, vmin=-1, vmax=1, square=True, linewidths=0.5,
+            annot_kws={"size": 9}, ax=ax)
+ax.set_title("Correlation Matrix: Food Access & Health Outcomes\n(Census Tract Level, N≈39K)",
+             fontsize=13, fontweight="bold", pad=15)
+plt.tight_layout()
+plt.savefig(f"{OUTPUT_DIR}/correlation_heatmap.png", dpi=150)
+plt.close()
+print(f"  → Saved: {OUTPUT_DIR}/correlation_heatmap.png")
+
+
+# ── 5. Pearson Correlations vs. Each Health Outcome ──────────────────────────
+print("\n" + "=" * 60)
+print("STEP 5: Pearson Correlations — Access Measures vs Health Outcomes")
+print("=" * 60)
+
+results = []
+for outcome in HEALTH_OUTCOMES:
+    for measure in ["lapop1", "lalowi1", FOOD_DESERT_FLAG, "MedianFamilyIncome", "TractHUNV"]:
+        sub = df_model[[outcome, measure]].dropna()
+        r, p = stats.pearsonr(sub[outcome], sub[measure])
+        results.append({"Outcome": outcome, "Predictor": measure,
+                        "Pearson_r": round(r, 4), "p_value": round(p, 6),
+                        "N": len(sub)})
+corr_df = pd.DataFrame(results)
+print(corr_df.to_string(index=False))
+corr_df.to_csv(f"{OUTPUT_DIR}/pearson_correlations.csv", index=False)
+print(f"  → Saved: {OUTPUT_DIR}/pearson_correlations.csv")
+
+
+# ── 6. OLS Regression ───────────────────────────────────────────────────────
+print("\n" + "=" * 60)
+print("STEP 6: OLS Regression — Predicting Each Health Outcome")
+print("=" * 60)
+
+"""
+Model:
+  Health_Outcome ~ LILATracts_1And10 + lapop1 + MedianFamilyIncome
+                 + TractHUNV + TractSNAP + TractBlack + TractHispanic + Urban
+
+  - LILATracts_1And10:  key food desert flag (main variable of interest)
+  - lapop1:             continuous food access measure
+  - MedianFamilyIncome: socioeconomic control
+  - TractHUNV:          transportation barrier control
+  - TractSNAP:          poverty/food assistance control
+  - TractBlack/Hispanic:demographic controls
+  - Urban:              urban/rural control
+"""
+
+formula_template = (
+    "{outcome} ~ LILATracts_1And10 + lapop1 + MedianFamilyIncome "
+    "+ TractHUNV + TractSNAP + TractBlack + TractHispanic + Urban"
+)
+
+reg_summary = []
+
+for outcome in HEALTH_OUTCOMES:
+    formula = formula_template.format(outcome=outcome)
+    model   = smf.ols(formula, data=df_model).fit()
+
+    print(f"\n{'─'*50}")
+    print(f"  Outcome: {outcome}")
+    print(f"  R²={model.rsquared:.4f}  Adj-R²={model.rsquared_adj:.4f}  N={int(model.nobs):,}")
+    print(f"  {'Variable':<25} {'Coef':>10} {'Std Err':>10} {'t':>8} {'p':>10}")
+    print(f"  {'─'*25} {'─'*10} {'─'*10} {'─'*8} {'─'*10}")
+    for var in model.params.index:
+        coef = model.params[var]
+        se   = model.bse[var]
+        t    = model.tvalues[var]
+        p    = model.pvalues[var]
+        sig  = "***" if p < 0.001 else ("**" if p < 0.01 else ("*" if p < 0.05 else ""))
+        print(f"  {var:<25} {coef:>10.4f} {se:>10.4f} {t:>8.2f} {p:>10.4f} {sig}")
+
+    reg_summary.append({
+        "Outcome": outcome,
+        "R2": round(model.rsquared, 4),
+        "Adj_R2": round(model.rsquared_adj, 4),
+        "N": int(model.nobs),
+        "Coef_LILA": round(model.params["LILATracts_1And10"], 4),
+        "P_LILA": round(model.pvalues["LILATracts_1And10"], 6),
+        "Coef_Income": round(model.params["MedianFamilyIncome"], 6),
+        "P_Income": round(model.pvalues["MedianFamilyIncome"], 6),
+    })
+
+reg_df = pd.DataFrame(reg_summary)
+reg_df.to_csv(f"{OUTPUT_DIR}/ols_regression_summary.csv", index=False)
+print(f"\n  → Saved: {OUTPUT_DIR}/ols_regression_summary.csv")
+
+
+# ── 7. Scatter Plots: lapop1 vs Each Health Outcome ─────────────────────────
+print("\n" + "=" * 60)
+print("STEP 7: Scatter Plots (sample of 5,000 tracts for readability)")
+print("=" * 60)
+
+sample = df_model.sample(n=min(5000, len(df_model)), random_state=42)
+colors = sample[FOOD_DESERT_FLAG].map({0: "#4C72B0", 1: "#DD8452"})
+
+fig, axes = plt.subplots(2, 2, figsize=(13, 10))
+axes = axes.flatten()
+
+for i, outcome in enumerate(HEALTH_OUTCOMES):
+    ax = axes[i]
+    ax.scatter(sample["lapop1"], sample[outcome],
+               c=colors, alpha=0.35, s=8, rasterized=True)
+
+    # Regression lines by group
+    for flag, color, label in [(0, "#1a4f99", "Non-Food Desert"), (1, "#a94c0a", "Food Desert")]:
+        sub = sample[sample[FOOD_DESERT_FLAG] == flag][["lapop1", outcome]].dropna()
+        if len(sub) > 10:
+            m, b = np.polyfit(sub["lapop1"], sub[outcome], 1)
+            x_line = np.linspace(sub["lapop1"].min(), sub["lapop1"].max(), 200)
+            ax.plot(x_line, m * x_line + b, color=color, linewidth=2, label=label)
+
+    r, p = stats.pearsonr(sample["lapop1"].dropna(), sample[outcome].dropna())
+    ax.set_xlabel("Population >1 Mile from Grocery Store (lapop1)", fontsize=10)
+    ax.set_ylabel(f"{outcome} Prevalence (%)", fontsize=10)
+    ax.set_title(f"{outcome} vs. Food Access\n(r = {r:.3f}, p {'< 0.001' if p < 0.001 else f'= {p:.3f}'})",
+                 fontsize=11, fontweight="bold")
+    ax.legend(fontsize=9, markerscale=3)
+    ax.grid(alpha=0.2)
+
+plt.suptitle("Health Outcomes vs. Population Distance from Nearest Grocery Store\n"
+             "Orange = Food Desert Tract  |  Blue = Non-Food Desert Tract",
+             fontsize=12, fontweight="bold", y=1.01)
+plt.tight_layout()
+plt.savefig(f"{OUTPUT_DIR}/scatter_access_vs_outcomes.png", dpi=150, bbox_inches="tight")
+plt.close()
+print(f"  → Saved: {OUTPUT_DIR}/scatter_access_vs_outcomes.png")
+
+
+# ── 8. Income-Stratified Analysis ───────────────────────────────────────────
+print("\n" + "=" * 60)
+print("STEP 8: Income-Stratified Analysis")
+print("=" * 60)
+
+"""
+Key question: Does the food desert effect hold across income levels,
+or is it really just a poverty effect?
+"""
+
+df_model["income_quartile"] = pd.qcut(
+    df_model["MedianFamilyIncome"], q=4,
+    labels=["Q1 (Lowest)", "Q2", "Q3", "Q4 (Highest)"]
+)
+
+strat = df_model.groupby(["income_quartile", FOOD_DESERT_FLAG])[HEALTH_OUTCOMES].mean().round(2)
+print(strat)
+strat.to_csv(f"{OUTPUT_DIR}/income_stratified_means.csv")
+
+# Plot: DIABETES by income quartile, split by food desert status
+fig, ax = plt.subplots(figsize=(10, 5))
+quartiles = ["Q1 (Lowest)", "Q2", "Q3", "Q4 (Highest)"]
+x = np.arange(len(quartiles))
+width = 0.35
+
+for flag, offset, color, label in [(0, -width/2, "#4C72B0", "Non-Food Desert"),
+                                    (1,  width/2, "#DD8452", "Food Desert")]:
+    means = [strat.loc[(q, flag), "DIABETES"] if (q, flag) in strat.index else np.nan
+             for q in quartiles]
+    ax.bar(x + offset, means, width, label=label, color=color, alpha=0.85)
+
+ax.set_xticks(x)
+ax.set_xticklabels(quartiles, fontsize=11)
+ax.set_xlabel("Median Family Income Quartile", fontsize=11)
+ax.set_ylabel("Diabetes Prevalence (%)", fontsize=11)
+ax.set_title("Diabetes Rate by Income Quartile and Food Desert Status\n"
+             "(Tests whether food desert effect persists after controlling for income)",
+             fontsize=11, fontweight="bold")
+ax.legend(fontsize=11)
+ax.grid(axis="y", alpha=0.3)
+plt.tight_layout()
+plt.savefig(f"{OUTPUT_DIR}/diabetes_by_income_and_desert.png", dpi=150)
+plt.close()
+print(f"  → Saved: {OUTPUT_DIR}/diabetes_by_income_and_desert.png")
+
+
+# ── 9. Urban vs Rural Subgroup ───────────────────────────────────────────────
+print("\n" + "=" * 60)
+print("STEP 9: Urban vs Rural Subgroup Analysis")
+print("=" * 60)
+
+for label, subset in [("Urban", df_model[df_model["Urban"] == 1]),
+                       ("Rural", df_model[df_model["Urban"] == 0])]:
+    sub_group = subset.groupby(FOOD_DESERT_FLAG)[HEALTH_OUTCOMES].mean().round(2)
+    sub_group.index = ["Non-Desert", "Desert"]
+    print(f"\n{label} tracts (n={len(subset):,}):")
+    print(sub_group)
+
+urban_rural = df_model.groupby(["Urban", FOOD_DESERT_FLAG])[HEALTH_OUTCOMES].mean().round(2)
+urban_rural.to_csv(f"{OUTPUT_DIR}/urban_rural_subgroup.csv")
+print(f"\n  → Saved: {OUTPUT_DIR}/urban_rural_subgroup.csv")
+
+
+# ── 10. State-Level Summary ───────────────────────────────────────────────────
+print("\n" + "=" * 60)
+print("STEP 10: State-Level Summary")
+print("=" * 60)
+
+state_summary = df.groupby("State").agg(
+    n_tracts=("CensusTract", "count"),
+    pct_food_desert=(FOOD_DESERT_FLAG, lambda x: round(x.mean() * 100, 1)),
+    mean_diabetes=("DIABETES", "mean"),
+    mean_obesity=("OBESITY", "mean"),
+    mean_bphigh=("BPHIGH", "mean"),
+    mean_income=("MedianFamilyIncome", "mean")
+).round(2).sort_values("pct_food_desert", ascending=False)
+
+print(state_summary.head(10))
+state_summary.to_csv(f"{OUTPUT_DIR}/state_level_summary.csv")
+print(f"  → Saved: {OUTPUT_DIR}/state_level_summary.csv")
+
+print("\n" + "=" * 60)
+print("ALL ANALYSIS COMPLETE")
+print(f"All outputs saved to: ./{OUTPUT_DIR}/")
+print("=" * 60)
