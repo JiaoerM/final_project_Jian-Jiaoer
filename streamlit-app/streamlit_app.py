@@ -205,7 +205,7 @@ st.markdown("""
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data
 def load_data():
-    df = pd.read_csv("data/cleaned/merged_tract_data.csv", dtype={"CensusTract": str})
+    df = pd.read_csv("data/derived/merged_tract_data.csv", dtype={"CensusTract": str})
 
     # Derived columns
     df["FoodDesert"] = df["LILATracts_1And10"].map({0: "Non-Food Desert", 1: "Food Desert"})
