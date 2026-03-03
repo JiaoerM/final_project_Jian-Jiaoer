@@ -1,6 +1,6 @@
 """
-streamlit.py  —  Food Desert & Health Outcomes Explorer
-Run with:  streamlit run streamlit_app.py
+dashboard.py  —  Food Desert & Health Outcomes Explorer
+Run with:  streamlit run dashboard.py
 Requires:  pip install streamlit plotly pandas numpy scipy statsmodels
 """
 
@@ -205,7 +205,7 @@ st.markdown("""
 # ══════════════════════════════════════════════════════════════════════════════
 @st.cache_data
 def load_data():
-    df = pd.read_csv("data/derived/merged_tract_data.csv", dtype={"CensusTract": str})
+    df = pd.read_csv("/Users/majiaoer/Desktop/final_project_Jian-Jiaoer/data/derived/merged_tract_data.csv", dtype={"CensusTract": str})
 
     # Derived columns
     df["FoodDesert"] = df["LILATracts_1And10"].map({0: "Non-Food Desert", 1: "Food Desert"})
@@ -542,7 +542,26 @@ with tab2:
         map_color = "Oranges" if "desert" in map_metric else ("Blues_r" if map_metric == "mean_income" else "RdPu")
 
     with map_col1:
+        # Plotly choropleth requires 2-letter abbreviations, not full state names
+        STATE_ABBREV = {
+            "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
+            "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",
+            "District of Columbia": "DC", "Florida": "FL", "Georgia": "GA", "Hawaii": "HI",
+            "Idaho": "ID", "Illinois": "IL", "Indiana": "IN", "Iowa": "IA",
+            "Kansas": "KS", "Kentucky": "KY", "Louisiana": "LA", "Maine": "ME",
+            "Maryland": "MD", "Massachusetts": "MA", "Michigan": "MI", "Minnesota": "MN",
+            "Mississippi": "MS", "Missouri": "MO", "Montana": "MT", "Nebraska": "NE",
+            "Nevada": "NV", "New Hampshire": "NH", "New Jersey": "NJ", "New Mexico": "NM",
+            "New York": "NY", "North Carolina": "NC", "North Dakota": "ND", "Ohio": "OH",
+            "Oklahoma": "OK", "Oregon": "OR", "Pennsylvania": "PA", "Rhode Island": "RI",
+            "South Carolina": "SC", "South Dakota": "SD", "Tennessee": "TN", "Texas": "TX",
+            "Utah": "UT", "Vermont": "VT", "Virginia": "VA", "Washington": "WA",
+            "West Virginia": "WV", "Wisconsin": "WI", "Wyoming": "WY",
+        }
         state_df_display = state_df.copy()
+        state_df_display["StateAbbr"] = state_df_display["State"].map(STATE_ABBREV)
+        state_df_display = state_df_display.dropna(subset=["StateAbbr"])
+
         if map_metric == "pct_desert":
             state_df_display["display"] = (state_df_display["pct_desert"] * 100).round(1)
             fmt = ".1f"
@@ -552,7 +571,7 @@ with tab2:
 
         fig_map = px.choropleth(
             state_df_display,
-            locations="State",
+            locations="StateAbbr",
             locationmode="USA-states",
             color="display",
             scope="usa",
